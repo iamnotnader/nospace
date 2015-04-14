@@ -1,0 +1,829 @@
+package com.example.nospace;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
+import android.app.Activity;
+import android.os.Bundle;
+import android.util.Log;
+import android.view.Menu;
+import android.view.View;
+import android.widget.EditText;
+import android.widget.TextView;
+
+public class MainActivity extends Activity {
+	private static final String unigramFilename = "vocab_cs";
+	private static final String bigramFilename = "sorted_2grams";
+	
+	private static final double numUnigrams = 200000;
+	private static final double numBigrams = 1000000;
+	
+	private static double minUniProb = -16.378;
+	private static double maxUniProb = -2.3478;
+	
+	private static double error_rate = 0.05;
+
+	
+	private static HashMap<BetterString, HashMap<BetterString, Double>> bigramMap = new HashMap<BetterString, HashMap<BetterString, Double>>();
+	private static HashMap<BetterString, Double> unigramMap = new HashMap<BetterString, Double>();
+	private static HashMap<BetterString, BetterString> dictionaryMap = new HashMap<BetterString, BetterString>();
+	
+	// This assumes the input read in from the input stream "in" is of the form
+	// (w1\tcount\n)* where w1 is a string and count is the number of times the string
+	// w1 occurred in the corpus.
+    private void readUnigrams(
+    		BufferedReader in,
+    		HashMap<BetterString, BetterString> dictionaryMapIn,
+    		HashMap<BetterString, Double> unigramMapIn,
+    		double N) throws FileNotFoundException, IOException
+    {
+        String line;
+        int numLines = 0;
+        // Looping the read block until all lines in the file are read.
+        double totalCount = 0;
+        while ((line = in.readLine()) != null) {
+            if (numLines == N) {
+                break;
+            }
+            numLines++;
+			// Extracting the tab-separated strings from the line to add to our data
+			// structure.
+            String datavalue[] = line.split("\t");
+            BetterString value1 = new BetterString(datavalue[0].toLowerCase());
+            for (int ind = 0; ind < value1.length; ind++) {
+            	if (!Character.isLetter(value1.myChars[ind]) || value1.myChars[ind] == '\'' || value1.myChars[ind] == '.' || value1.myChars[ind] == '&' || value1.myChars[ind] == '-') {
+            		continue;
+            	}
+            }
+            double value2 = Double.parseDouble(datavalue[1]);
+
+            Double count = unigramMapIn.get(value1);
+            if (count != null) {
+                unigramMapIn.put(dictionaryMapIn.get(value1), count + value2);
+            } else {
+            	dictionaryMapIn.put(value1, value1);
+                unigramMapIn.put(value1, value2);
+            }
+
+            totalCount += value2;
+            // Printing the value read from the file to the console
+            //System.out.println(value1 + "\t" + value2);
+        }
+
+        double min = Double.NEGATIVE_INFINITY;
+        double max = 0;
+		// Converting frequency counts read into our data structure into normalized probabilities.
+        for (Map.Entry<BetterString, Double> entry : unigramMapIn.entrySet()) {
+            //System.out.println(Math.log(entry.getValue()));
+        	if (min < Math.log(entry.getValue()) - Math.log(totalCount)) {
+        		min = Math.log(entry.getValue()) - Math.log(totalCount);
+        	}
+        	if (max > Math.log(entry.getValue()) - Math.log(totalCount)) {
+        		max = Math.log(entry.getValue()) - Math.log(totalCount);
+        	}
+            unigramMapIn.put(entry.getKey(), Math.log(entry.getValue()) - Math.log(totalCount));
+        }
+        // backwards; too lazy to fix.
+        maxUniProb = min;
+        minUniProb = max;
+        System.out.println(min);
+        System.out.println(max);
+    }
+
+	
+	// This assumes the input read in from the input stream "in" is of the form
+	// (w1\tw2\tcount\n)* where w1 is a string, w2 is a string, and count is the number of times the string
+	// w1\sw2 occurred in the corpus.
+	private void readBigrams(
+		BufferedReader in,
+		HashMap<BetterString, BetterString> dictionaryMapIn,
+		HashMap<BetterString, HashMap<BetterString, Double>> bigramMapIn,
+		double N) throws FileNotFoundException, IOException
+	{
+		String line;
+		int numLines = 0;
+		
+		// Looping the read block until all lines in the file are read.
+		while ((line = in.readLine()) != null) {
+			if (numLines == N) {
+				break;
+			}
+			numLines++;
+			// Extracting the tab-separated strings from the line to add to our data
+			// structure.
+			String datavalue[] = line.split("\t");
+			BetterString value1 = new BetterString(datavalue[0].toLowerCase());
+			BetterString value2 = new BetterString(datavalue[1].toLowerCase());
+			double value3 = Double.parseDouble(datavalue[2]);
+
+			BetterString v1New = dictionaryMapIn.get(value1);
+			if (v1New == null) {
+				dictionaryMapIn.put(value1, value1);
+			} else {
+				value1 = v1New;
+			}
+			BetterString v2New = dictionaryMapIn.get(value2);
+			if (v2New == null) {
+				dictionaryMapIn.put(value2, value2);
+			} else {
+				value2 = v2New;
+			}
+			
+			HashMap<BetterString, Double> dist = bigramMapIn.get(value1);
+			if (dist != null) {
+				Double val = dist.get(value2);
+				if (val != null) {
+					dist.put(value2, val + value3);
+				} else {
+					dist.put(value2, value3);
+					bigramMapIn.put(value1, dist);
+				}
+			} else {
+				dist = new HashMap<BetterString, Double>();
+				dist.put(value2, value3);
+				bigramMapIn.put(value1, dist);
+			}
+
+			// Printing the value read from file to the console
+			//System.out.println(value1 + "\t" + value2 + "\t" + value3);
+		}
+
+		// Converting frequency counts read into our data structure into normalized probabilities.
+		for (Map.Entry<BetterString, HashMap<BetterString, Double>> entry : bigramMapIn.entrySet()) {
+			double totalCount = 0;
+			HashMap<BetterString, Double> value = entry.getValue();
+			for (Map.Entry<BetterString, Double> subEntry : value.entrySet()) {
+				totalCount += subEntry.getValue();
+			}
+			//System.out.println("total count " + totalCount);
+			//System.out.println("total count log" + Math.log(totalCount));
+			for (Map.Entry<BetterString, Double> subEntry : value.entrySet()) {
+				//System.out.println("value " + subEntry.getValue());
+				//System.out.println("value log " + Math.log(subEntry.getValue()));
+				value.put(subEntry.getKey(), Math.log(subEntry.getValue()) - Math.log(totalCount));
+			}
+		}
+	}
+	
+	// Reads the unigram and bigram language model into our data structures.
+	private void populateDataStructures()
+	{
+        // Get the language model from text files.
+        File unigramFile = new File(getExternalFilesDir(null), unigramFilename);
+        File bigramFile = new File(getExternalFilesDir(null), bigramFilename);
+
+        // Read the language model into our data structures.
+        try {   
+        	// Set up the unigram input stream.
+        	InputStream unigramInput = new FileInputStream(unigramFile);
+            BufferedReader unigramReader = new BufferedReader(new InputStreamReader(unigramInput));
+            
+            // Read in the unigrams from the input stream into our data structures.
+            System.out.println("Reading unigrams Now");
+            readUnigrams(unigramReader, dictionaryMap, unigramMap, numUnigrams);
+            System.out.println("Done Reading");
+            
+            // Close the unigram input stream.
+            unigramReader.close();
+            unigramInput.close();
+            /*
+            // Set up the bigram input stream.            
+            InputStream bigramInput = new FileInputStream(bigramFile);
+            BufferedReader bigramReader = new BufferedReader(new InputStreamReader(bigramInput));
+            
+            // Read in the bigrams from the input stream into our data structures.
+            System.out.println("Reading Now");
+            readBigrams(bigramReader, dictionaryMap, bigramMap, numBigrams);
+            System.out.println("Done Reading");
+            
+            // Close the bigram input stream.
+            bigramReader.close();
+            bigramInput.close();
+            */
+        } catch (IOException e) {
+            // Unable to create file, likely because external storage is
+            // not currently mounted.
+            Log.w("ExternalStorage", "Error reading in the file", e);
+        }
+	}
+	
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        
+        populateDataStructures();
+        /*
+        System.out.println("MIN: " + (minUniProb - Math.log10(error_rate)*2));
+        System.out.println("slower: " + unigramMap.get(new BetterString("slower")));
+        System.out.println("lower: " + unigramMap.get(new BetterString("lower")));
+        System.out.println("it of: " + bigramMap.get(new BetterString("it")).get(new BetterString("of")) );
+        System.out.println("of not: " + bigramMap.get(new BetterString("of")).get(new BetterString("not")) );
+        System.out.println("it or: " + bigramMap.get(new BetterString("it")).get(new BetterString("or")) );
+        System.out.println("or not: " + bigramMap.get(new BetterString("or")).get(new BetterString("not")) );
+        System.out.println("go a: " + bigramMap.get(new BetterString("go")).get(new BetterString("a")) );
+        System.out.println("a lot: " + bigramMap.get(new BetterString("a")).get(new BetterString("lot")) );
+        System.out.println("lot slower: " + bigramMap.get(new BetterString("lot")).get(new BetterString("slower")) );
+        */
+        /*
+        // Get the language model from text files.
+        File unigramFile = new File(getExternalFilesDir(null), "unigram.ser");
+        System.out.println("Reading In Unigrams");
+        try
+        {
+           FileInputStream fileIn = new FileInputStream(unigramFile);
+           ObjectInputStream in = new ObjectInputStream(fileIn);
+           unigramMap = (HashMap<BetterString, Double>) in.readObject();
+           in.close();
+           fileIn.close();
+        }catch(IOException i)
+        {
+           i.printStackTrace();
+           return;
+        }catch(ClassNotFoundException c)
+        {
+            c.printStackTrace();
+            return;
+         }
+        System.out.println("Unigrams Read In");
+        */
+        File bigramFile = new File(getExternalFilesDir(null), "bigram2.ser");
+        System.out.println("Reading In Bigrams");
+        try
+        {
+           FileInputStream fileIn = new FileInputStream(bigramFile);
+           ObjectInputStream in = new ObjectInputStream(fileIn);
+           bigramMap = (HashMap<BetterString, HashMap<BetterString, Double>>) in.readObject();
+           in.close();
+           fileIn.close();
+        }catch(IOException i)
+        {
+           i.printStackTrace();
+           return;
+        }catch(ClassNotFoundException c)
+        {
+            c.printStackTrace();
+            return;
+         }
+        System.out.println("Bigrams Read In");
+        
+        System.out.println(unigramMap.containsKey(new BetterString("of")) + " " + unigramMap.get(new BetterString("of")));
+        System.out.println(bigramMap.containsKey(new BetterString("of")) + " " + bigramMap.get(new BetterString("of")).containsKey(new BetterString("the")) + " " + bigramMap.get(new BetterString("of")).get(new BetterString("the")));
+        
+        System.out.println(bigramMap.get(new BetterString("say")).get(new BetterString("im")) + " " + bigramMap.get(new BetterString("im")).get(new BetterString("not")));
+        System.out.println(bigramMap.get(new BetterString("say")).get(new BetterString("i")) + " " + bigramMap.get(new BetterString("i")).get(new BetterString("'m")) + " " + bigramMap.get(new BetterString("'m")).get(new BetterString("not")));
+        
+        /*
+        System.out.println("Serializing Unigrams");
+        // Get the language model from text files.
+        File unigramOutfile = new File(getExternalFilesDir(null), "unigram.ser");
+        try
+        {
+        	FileOutputStream fileOut = new FileOutputStream(unigramOutfile);
+        	ObjectOutputStream out = new ObjectOutputStream(fileOut);
+        	out.writeObject(unigramMap);
+        	out.close();
+        	fileOut.close();
+        }catch(IOException i)
+        {
+        	i.printStackTrace();
+        }
+        System.out.println("Done Serializing Unigrams");
+        
+        System.out.println("Serializing Bigrams");
+        File bigramOutfile = new File(getExternalFilesDir(null), "bigram2.ser");
+        try
+        {
+        	FileOutputStream fileOut = new FileOutputStream(bigramOutfile);
+        	ObjectOutputStream out = new ObjectOutputStream(fileOut);
+        	out.writeObject(bigramMap);
+        	out.close();
+        	fileOut.close();
+        }catch(IOException i)
+        {
+        	i.printStackTrace();
+        }
+        System.out.println("Done Serializing Bigrams");
+        */
+        
+        if (true) {
+        	ArrayList<Integer> x = new ArrayList<Integer>(100000000);
+        }
+        System.gc();
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.activity_main, menu);
+        return true;
+    }
+    
+    // OLD CODE STARTS HERE.
+
+    private static double g(
+    		BetterString s1,
+    		BetterString s2,
+    		double old_prob,
+    		HashMap<BetterString, HashMap<BetterString, Double>> bigramMapIn,
+    		HashMap<BetterString, Double> unigramMapIn)
+    {
+    	double min_prob = -1.0e100;
+
+    	HashMap<BetterString, Double> dist = bigramMapIn.get(s1);
+    	if (dist != null) {
+    		Double val = dist.get(s2);
+    		if (val != null) {
+    			return old_prob + val.doubleValue();
+    		} else {
+    			val = unigramMapIn.get(s2);
+    			if (val != null) {
+    				return old_prob + val.doubleValue();
+    			} else {
+    				return old_prob + min_prob;
+    			}
+    		}
+    	} else {
+    		Double val = unigramMapIn.get(s2);
+    		if (val != null) {
+    			return old_prob + val.doubleValue();
+    		} else {
+    			return old_prob + min_prob;
+    		}
+    	}
+    }
+
+    static BetterString sb = new BetterString();
+    private static String segmentString(
+    		String input,
+    		HashMap<BetterString, HashMap<BetterString, Double> > bigramMapIn,
+    		HashMap<BetterString, Double> unigramMapIn)
+    {
+    	int longest_allowable_str = 15;
+    	String[] perturbations = {"aqwsxz", "bvfghn", "cxsdfv", "dswerfvcx", "ewsdfr", "fcdertgbv", "gvfrtyhnb", "hbgtyujmn", "iujklo", "jyhnmkiu", "kjmloiu", "lkiop", "mnhjk", "nbghjm", "oiklp", "pol", "qasw", "redfgt", "szaqwedcx", "trfghy", "uyhjki", "vcdfgb", "wqasde", "xzasdc", "ytghju", "zxsa"};
+
+    	ArrayList< ArrayList<PathInfoStruct> > frontier = new ArrayList< ArrayList<PathInfoStruct> >();
+    	for (int i = 0; i < input.length() + 1; i++) {
+    		frontier.add(new ArrayList<PathInfoStruct>());
+    	}
+		BetterString empty = new BetterString("-+=(empty)=+-"); // This gives us the unigram probability. 
+
+		System.out.println("INITING ALG");
+		// This adds extra letter fixing.
+		for (int i = 0; i < Math.min(longest_allowable_str, input.length()); i++) {
+			for (int k1 = 0; k1 < i; k1++) {
+				for (int ind = 0; ind < 0+k1; ind++) {
+					sb.append(input.charAt(ind));
+				}
+				for (int ind = 0+k1+1; ind < 0+i+1; ind++) {
+					sb.append(input.charAt(ind));
+				}
+				
+				if (!unigramMapIn.containsKey(sb)
+				||  unigramMap.get(sb) < minUniProb - Math.log10(error_rate)*2) {
+					sb.clear();
+					continue;
+				}
+
+				PathInfoStruct best_path = PathInfoStruct.allocatePathInfoStruct();
+				best_path.word = sb;
+				best_path.startPos = 0;
+				best_path.endPos = 0 + sb.length + 1;
+				best_path.currentProb = g(empty, best_path.word, 0, bigramMapIn, unigramMapIn);
+				best_path.backPointer = null;
+
+				// Minus one becuase length = i+1
+				best_path.currentProb += (Math.log(error_rate)*2 + Math.log(1.0 - error_rate)*(i));
+
+				System.out.println(best_path.endPos);
+				frontier.get(best_path.endPos).add(best_path);
+				sb = new BetterString();
+			}
+		}
+		
+    	for (int i = 0; i < Math.min(longest_allowable_str, input.length()); i++) {
+    		for (int k1 = 0; k1 <= i; k1++) {
+    			for (int k2 = k1; k2 <= i; k2++) {
+    				char actual_char1 = input.charAt(k1);
+    				char actual_char2 = input.charAt(k2);
+    				String possible_perturbations1 = perturbations[(int)(actual_char1 - 'a')];
+    				String possible_perturbations2 = perturbations[(int)(actual_char2 - 'a')];
+
+    				if (k1 == k2) {
+    					for (int p = 0; p < possible_perturbations1.length(); p++) {
+    						if (p == 0 && k1 != 0) {
+    							continue;
+    						}
+    						
+    						for (int ind = 0; ind < 0+k1; ind++) {
+    							sb.append(input.charAt(ind));
+    						}
+    						sb.append(possible_perturbations1.charAt(p));
+    						for (int ind = 0+k1+1; ind < 0+i+1; ind++) {
+    							sb.append(input.charAt(ind));
+    						}
+    						/*
+    						sb.append(input.substring(0, 0+k1));
+    						sb.append(possible_perturbations1.charAt(p));
+    						sb.append(input.substring(0+k1+1, 0+i+1));
+							*/
+    						if (!unigramMapIn.containsKey(sb)
+    						||  unigramMap.get(sb) < minUniProb - Math.log10(error_rate)) {
+        						sb.clear();
+    							continue;
+    						}
+    						PathInfoStruct temp = PathInfoStruct.allocatePathInfoStruct();
+
+    						temp.word = sb;
+    						temp.startPos = 0;
+    						temp.endPos = i+1;
+    						temp.currentProb = g(empty, temp.word, 0, bigramMapIn, unigramMapIn);
+    						temp.backPointer = null;
+
+    						if (input.charAt(k1) == possible_perturbations1.charAt(p)) {
+    							temp.currentProb += Math.log(1.0 - error_rate)*(i+1);
+    						} else {
+    							temp.currentProb += (Math.log(error_rate) + Math.log(1.0 - error_rate)*(i));
+    						}
+
+    						System.out.println(temp.endPos);
+    						frontier.get(temp.endPos).add(temp);
+    						sb = new BetterString();
+    					}
+    				} else {
+    					if (i < 1) {
+    						continue;
+    					}
+    					for (int p1 = 1; p1 < possible_perturbations1.length(); p1++) {
+    						for (int p2 = 1; p2 < possible_perturbations2.length(); p2++) {
+    							
+    							for (int ind = 0; ind < 0+k1; ind++) {
+    								sb.append(input.charAt(ind));
+    							}
+    							sb.append(possible_perturbations1.charAt(p1));
+    							for (int ind = 0+k1+1; ind < k2; ind++) {
+    								sb.append(input.charAt(ind));
+    							}
+    							sb.append(possible_perturbations2.charAt(p2));
+    							for (int ind = k2+1; ind < 0+i+1; ind++) {
+    								sb.append(input.charAt(ind));
+
+    							}
+    							
+    							/*
+    							sb.append(input.substring(0, 0+k1));
+    							sb.append(possible_perturbations1.charAt(p1));
+    							sb.append(input.substring(0+k1+1, k2));
+    							sb.append(possible_perturbations2.charAt(p2));
+    							sb.append(input.substring(k2+1, 0+i+1));
+    							*/
+    							
+    							if (!unigramMapIn.containsKey(sb)
+    							||  unigramMap.get(sb) < minUniProb - Math.log10(error_rate)*2) {
+    								sb.clear();
+    								continue;
+    							}
+
+    							PathInfoStruct temp = PathInfoStruct.allocatePathInfoStruct();
+
+    							temp.word = sb;
+    							temp.startPos = 0;
+    							temp.endPos = i+1;
+    							temp.currentProb = g(empty, temp.word, 0, bigramMapIn, unigramMapIn);
+    							temp.backPointer = null;
+
+    							// Minus one becuase length = i+1
+    							temp.currentProb += Math.log(error_rate)*2 + Math.log(1.0 - error_rate)*(i-1);
+
+    							System.out.println(temp.endPos);
+    							frontier.get(temp.endPos).add(temp);
+    							sb = new BetterString();
+    						}
+    					}
+    				}
+
+    			}
+    		}
+    	}
+
+    	System.out.println("STARTING ALG");
+    	ArrayList<PathInfoStruct> garbageDump = new ArrayList<PathInfoStruct>();
+		ArrayList< PathInfoStruct > previous_nodes = new ArrayList<PathInfoStruct>();
+    	for (int m = 1; m < input.length(); m++) {
+    		System.out.println("1");
+    		/*
+    		while (!(frontier.isEmpty()) && 
+    				(frontier.first().endPos == m)) {
+    			PathInfoStruct ended_node = frontier.first();
+    			frontier.remove(ended_node);
+    			ended_node.inUse = 0;
+    			
+    			previous_nodes.add(ended_node);
+    		}
+    		*/
+    		previous_nodes = frontier.get(m);
+    		System.out.println("2");
+
+    		
+    		String alphas = "abcdefghijklmnopqrstuvwxyz'";
+    		// This adds omission error fixing.
+    		for (int i = 0; i < Math.min(longest_allowable_str, input.length() - m ); i++) {
+    			for (int k1 = 0; k1 < i; k1++) {
+    				for (int p = 0; p < alphas.length(); p++) {
+    					for (int ind = m; ind < m+k1; ind++) {
+    						sb.append(input.charAt(ind));
+    					}
+    					sb.append(alphas.charAt(p));
+    					for (int ind = m+k1; ind < m+i+1; ind++) {
+    						sb.append(input.charAt(ind));
+    					}
+    					
+    					if (!unigramMapIn.containsKey(sb)
+    					||  unigramMap.get(sb) < minUniProb - Math.log10(error_rate)) {
+    						sb.clear();
+    						continue;
+    					}
+
+    					System.out.println(sb);
+
+    					int best_sentence_index = -1;
+    					double max_score = Double.NEGATIVE_INFINITY;
+    					for (int j = 0; j < previous_nodes.size(); j++) {
+    						BetterString s1 = previous_nodes.get(j).word;
+    						double old_g = previous_nodes.get(j).currentProb;
+
+    						double g_val = g(s1, sb, old_g, bigramMapIn, unigramMapIn);
+    						if (g_val > max_score) {
+    							best_sentence_index = j;
+    							max_score = g_val;
+    						}
+    					}
+
+    					PathInfoStruct best_path = PathInfoStruct.allocatePathInfoStruct();
+    					best_path.word = sb;
+    					best_path.startPos = m;
+    					best_path.endPos = m + sb.length - 1;
+    					best_path.currentProb = max_score;
+    					best_path.backPointer = previous_nodes.get(best_sentence_index);
+    					previous_nodes.get(best_sentence_index).inUse = 1;
+
+    					// Minus one becuase length = i+1
+    					if (alphas.charAt(p) != '\'') {
+    						best_path.currentProb += (Math.log(error_rate) + Math.log(1.0 - error_rate)*(i));
+    					}
+    					frontier.get(best_path.endPos).add(best_path);
+    					sb = new BetterString();
+    				}
+    			}
+    		}
+    		
+    		// This adds extra letter fixing.
+    		for (int i = 0; i < Math.min(longest_allowable_str, input.length() - m ); i++) {
+    			for (int k1 = 0; k1 < i; k1++) {
+					for (int ind = m; ind < m+k1; ind++) {
+						sb.append(input.charAt(ind));
+					}
+					for (int ind = m+k1+1; ind < m+i+1; ind++) {
+						sb.append(input.charAt(ind));
+					}
+    				
+    				if (!unigramMapIn.containsKey(sb)
+    				||  unigramMap.get(sb) < minUniProb - Math.log10(error_rate)*5) {
+    					sb.clear();
+    					continue;
+    				}
+
+    				int best_sentence_index = -1;
+    				double max_score = Double.NEGATIVE_INFINITY;
+    				for (int j = 0; j < previous_nodes.size(); j++) {
+    					BetterString s1 = previous_nodes.get(j).word;
+    					double old_g = previous_nodes.get(j).currentProb;
+
+    					double g_val = g(s1, sb, old_g, bigramMapIn, unigramMapIn);
+    					if (g_val > max_score) {
+    						best_sentence_index = j;
+    						max_score = g_val;
+    					}
+    				}
+
+    				PathInfoStruct best_path = PathInfoStruct.allocatePathInfoStruct();
+    				best_path.word = sb;
+    				best_path.startPos = m;
+    				best_path.endPos = m + sb.length + 1;
+    				best_path.currentProb = max_score;
+    				best_path.backPointer = previous_nodes.get(best_sentence_index);
+    				previous_nodes.get(best_sentence_index).inUse = 1;
+
+    				// Minus one becuase length = i+1
+    				best_path.currentProb += (Math.log(error_rate)*2 + Math.log(1.0 - error_rate)*(i));
+
+    				frontier.get(best_path.endPos).add(best_path);
+    				sb = new BetterString();
+    			}
+    		}
+    		
+    		for (int i = 0; i < Math.min(longest_allowable_str, input.length() - m); i++) {
+    			for (int k1 = 0; k1 <= i; k1++) {
+    				for (int k2 = k1; k2 <= i; k2++) {
+    					char actual_char1 = input.charAt(m+k1);
+    					char actual_char2 = input.charAt(m+k2);
+    					String possible_perturbations1 = perturbations[(int)(actual_char1 - 'a')];
+    					String possible_perturbations2 = perturbations[(int)(actual_char2 - 'a')];
+
+    					if (k1 == k2) {
+    						for (int p = 0; p < possible_perturbations1.length(); p++) {
+    							if (p == 0 && k1 != 0) {
+    								continue;
+    							}
+    							
+    							for (int ind = m; ind < m+k1; ind++) {
+    								sb.append(input.charAt(ind));
+    							}
+    							sb.append(possible_perturbations1.charAt(p));
+    							for (int ind = m+k1+1; ind < m+i+1; ind++) {
+    								sb.append(input.charAt(ind));
+    							}
+    							
+    							/*
+    							sb.append(input.substring(m, m+k1));
+    							sb.append(possible_perturbations1.charAt(p));
+    							sb.append(input.substring(m+k1+1, m+i+1));
+    							*/
+    							
+    							if (!unigramMapIn.containsKey(sb)
+    							||  (p != 0 && unigramMap.get(sb) < minUniProb - Math.log10(error_rate))) {
+    								sb.clear();
+    								continue;
+    							}
+
+
+    							int best_sentence_index = -1;
+    							double max_score = Double.NEGATIVE_INFINITY;
+    							for (int j = 0; j < previous_nodes.size(); j++) {
+    								BetterString s1 = previous_nodes.get(j).word;
+    								double old_g = previous_nodes.get(j).currentProb;
+
+    								double g_val = g(s1, sb, old_g, bigramMapIn, unigramMapIn);
+    								if (g_val > max_score) {
+    									best_sentence_index = j;
+    									max_score = g_val;
+    								}
+    							}
+
+    							PathInfoStruct best_path = PathInfoStruct.allocatePathInfoStruct();
+    							best_path.word = sb;
+    							best_path.startPos = m;
+    							best_path.endPos = m + sb.length;
+    							best_path.currentProb = max_score;
+    							best_path.backPointer = previous_nodes.get(best_sentence_index);
+    							previous_nodes.get(best_sentence_index).inUse = 1;
+
+    							if (input.charAt(m+k1) == possible_perturbations1.charAt(p)) {
+    								best_path.currentProb += Math.log(1.0 - error_rate)*(i+1);
+    							} else {
+    								best_path.currentProb += (Math.log(error_rate) + Math.log(1.0 - error_rate)*(i));
+    							}
+
+    							frontier.get(best_path.endPos).add(best_path);
+    							sb = new BetterString();
+    						}
+    					} else {
+    						if (i < 1) {
+    							continue;
+    						}
+    						for (int p1 = 1; p1 < possible_perturbations1.length(); p1++) {
+    							for (int p2 = 1; p2 < possible_perturbations2.length(); p2++) {
+    								for (int ind = m; ind < m+k1; ind++) {
+    									sb.append(input.charAt(ind));
+    								}
+    								sb.append(possible_perturbations1.charAt(p1));
+    								for (int ind = m+k1+1; ind < m+k2; ind++) {
+    									sb.append(input.charAt(ind));
+    								}
+    								sb.append(possible_perturbations2.charAt(p2));
+    								for (int ind = m+k2+1; ind < m+i+1; ind++) {
+    									sb.append(input.charAt(ind));
+    								}
+    								
+    								/*
+    								sb.append(input.substring(m, m+k1));
+    								sb.append(possible_perturbations1.charAt(p1));
+    								sb.append(input.substring(m+k1+1, m+k2));
+    								sb.append(possible_perturbations2.charAt(p2));
+    								sb.append(input.substring(m+k2+1, m+i+1));
+									*/
+
+    								if (!unigramMapIn.containsKey(sb)
+    								||  unigramMap.get(sb) < minUniProb - Math.log10(error_rate)*2) {
+    									sb.clear();
+    									continue;
+    								}
+
+    								int best_sentence_index = -1;
+    								double max_score = Double.NEGATIVE_INFINITY;
+    								for (int j = 0; j < previous_nodes.size(); j++) {
+    									BetterString s1 = previous_nodes.get(j).word;
+    									double old_g = previous_nodes.get(j).currentProb;
+
+    									double g_val = g(s1, sb, old_g, bigramMapIn, unigramMapIn);
+    									if (g_val > max_score) {
+    										best_sentence_index = j;
+    										max_score = g_val;
+    									}
+    								}
+
+    								PathInfoStruct best_path = PathInfoStruct.allocatePathInfoStruct();
+    								best_path.word = sb;
+    								best_path.startPos = m;
+    								best_path.endPos = m + sb.length;
+    								best_path.currentProb = max_score;
+    								best_path.backPointer = previous_nodes.get(best_sentence_index);
+    								previous_nodes.get(best_sentence_index).inUse = 1;
+
+    								// Minus one becuase length = i+1
+    								best_path.currentProb += Math.log(error_rate)*2 + Math.log(1.0 - error_rate)*(i-1);
+
+    								frontier.get(best_path.endPos).add(best_path);
+    								sb = new BetterString();
+    							}
+    						}
+    					}
+    				}
+    			}     
+    		}
+    		/*
+    		System.out.println("working_hard_ughhhsdfsdfhhhhh...");
+    		System.out.println(allStrs.size());
+    		for (int i = previous_nodes.size() - 1; i >= 0; i--) {
+    			PathInfoStruct p = previous_nodes.get(i);
+    			if (p.inUse == 0) {
+    				PathInfoStruct.deallocatePathInfoStruct(p);
+    			}
+    			garbageDump.add(p);
+    		}
+    		*/
+    	}
+
+    	PathInfoStruct best_node = null;
+    	double max_score = Double.NEGATIVE_INFINITY;
+    	ArrayList<PathInfoStruct> lastNodes = frontier.get(input.length());
+    	for (int i = 0; i < lastNodes.size(); i++) {
+    		PathInfoStruct current = lastNodes.get(i);
+
+    		//cout << current->current_prob << endl;
+    		if (current.currentProb > max_score) {
+    			best_node = current;
+    			max_score = current.currentProb;
+    		}
+    	}
+
+    	ArrayList< BetterString > best_sentence = new ArrayList<BetterString>();
+    	while (best_node != null) {
+    		best_sentence.add(best_node.word);
+    		best_node = best_node.backPointer;
+    	}
+    	Collections.reverse(best_sentence);
+
+    	String ret = "";
+    	for (int i = 0; i < best_sentence.size(); i++) {
+    		ret += best_sentence.get(i) + " ";
+    	}
+
+    	return ret;
+    }
+    
+    // OLD CODE ENDS HERE.
+	
+    private String removeExtraneousCharacters(String s)
+    {
+    	String out = "";
+    	for (int i = 0; i < s.length(); i++) {
+    		char c = s.charAt(i);
+    		if ((c >= 'a' && s.charAt(i) <= 'z') || (c >= 'A' && c <= 'Z')) {
+    			out += Character.toLowerCase(c);
+    		}
+    	}
+    	return out;
+    }
+    
+    /** Called when the user clicks the Send button */
+    public void sendMessage(View view) {
+        // Do something in response to button
+        EditText editText = (EditText) findViewById(R.id.edit_message);
+        String message = removeExtraneousCharacters(editText.getText().toString());
+        
+        TextView textView = (TextView) findViewById(R.id.output_message);
+        textView.setText(segmentString(message.toLowerCase(), bigramMap, unigramMap));
+    }
+    
+}

@@ -1,0 +1,2 @@
+INDEX VERSION 1.126+/home/daddy/Dropbox/Princeton Classes/Senior Year/COS497/Android/.metadata/.plugins/org.eclipse.jdt.core
+2255684891.index

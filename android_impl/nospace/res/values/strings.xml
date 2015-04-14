@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">NoSpace</string>
+    <string name="menu_settings">Settings</string>
+    
+    <string name="edit_message">Enter a message</string>
+    <string name="button_send">Done</string>
+    <string name="output_message">Your Segmented Text</string>
+    
+
+</resources>
